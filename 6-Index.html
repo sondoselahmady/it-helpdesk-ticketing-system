@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f6f9; margin: 0; padding: 20px; color: #333; }
+    .container { max-width: 650px; margin: 0 auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+    h2 { margin-top: 0; color: #1a73e8; }
+    .form-group { margin-bottom: 18px; }
+    label { display: block; font-weight: 600; margin-bottom: 6px; font-size: 14px; }
+    input[type="text"], select { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-size: 14px; }
+    .read-only-box { background: #f8f9fa; border: 1px solid #e1e4e8; padding: 12px; border-radius: 6px; font-size: 13px; line-height: 1.6; }
+    .banner { padding: 16px; border-radius: 6px; margin-bottom: 20px; font-size: 14px; }
+    .banner-warn { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
+    .banner-danger { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+    .helper-box { background: #e8f0fe; border-left: 4px solid #1a73e8; padding: 12px; margin-bottom: 10px; font-size: 13px; border-radius: 0 4px 4px 0; }
+    .btn { background: #1a73e8; color: white; border: none; padding: 12px 20px; border-radius: 4px; cursor: pointer; font-size: 15px; font-weight: 600; width: 100%; }
+    .btn:hover { background: #1557b0; }
+    .checkbox-container { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; cursor: pointer; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <div id="loadingView">Loading profile...</div>
+
+  <!-- PENDING VIEW -->
+  <div id="pendingView" class="hidden">
+    <h2>Account Awaiting Approval</h2>
+    <div class="banner banner-warn">
+      Your sign-in request has been sent to IT. An administrator must approve your account before you can submit tickets.
+    </div>
+  </div>
+
+  <!-- ADMIN VIEW -->
+  <div id="adminView" class="hidden">
+    <h2>Admin Console - User Approval</h2>
+    <div id="pendingList"></div>
+    <hr style="margin: 25px 0;">
+  </div>
+
+  <!-- EMPLOYEE TICKET FORM -->
+  <div id="ticketView" class="hidden">
+    <h2>Submit IT Support Ticket</h2>
+    
+    <div class="form-group">
+      <div class="read-only-box" id="userInfoBox"></div>
+    </div>
+
+    <form id="ticketForm" onsubmit="handleFormSubmit(event)">
+      <div class="form-group">
+        <label for="problemType">Type of Problem</label>
+        <input list="problemTypes" id="problemType" placeholder="Type to search..." autocomplete="off" required oninput="onProblemTypeChange()">
+        <datalist id="problemTypes"></datalist>
+      </div>
+
+      <div id="conditionalFields">
+        <div class="form-group">
+          <label for="details">Details</label>
+          <input list="detailSuggestions" id="details" placeholder="Describe the issue..." autocomplete="off">
+          <datalist id="detailSuggestions"></datalist>
+        </div>
+
+        <div class="form-group">
+          <label>Screenshot</label>
+          <div class="helper-box">
+            Press the <strong>PrtSc</strong> key on your keyboard, paste it into Paint or take a picture, and attach it below to help us see what is happening.
+          </div>
+          <input type="file" id="screenshot" accept="image/*">
+        </div>
+
+        <div class="form-group">
+          <label class="checkbox-container">
+            <input type="checkbox" id="callRequested">
+            Request IT department to call me regarding this issue
+          </label>
+        </div>
+      </div>
+
+      <button type="submit" class="btn" id="submitBtn">Submit Ticket</button>
+    </form>
+  </div>
+</div>
+
+<script>
+  let currentUser = null;
+  let clientIP = "Fetching...";
+
+  const problemData = {
+    "USB Port Access request": [],
+    "Computer & Devices issue": ["Computer will not turn on", "Blue Screen / System Crash", "Keyboard / Mouse not working", "Monitor has no display", "Device running extremely slow"],
+    "Email problem": ["Cannot send or receive emails", "Outlook / Webmail keeps freezing", "Need shared mailbox access", "Suspicious / Phishing email received"],
+    "Passwords & Access": ["Password reset request", "Account locked out", "Need access to internal software", "Two-factor authentication (2FA) issue"],
+    "Internet & Wi-Fi": ["Wi-Fi disconnected", "Very slow connection", "Specific website blocked or unreachable", "VPN connection failing"],
+    "Printer & Scanner": ["Printer offline / not found", "Paper jam / hardware error", "Document stuck in queue", "Scan to email not working"],
+    "Files & Folders": ["Accidentally deleted file recovery", "Shared drive permission issue", "OneDrive / Google Drive sync error"],
+    "Programs & Applications": ["Application crashes on launch", "Software installation request", "License expired warning"],
+    "Meetings & Conference Rooms": ["Meeting room display not projecting", "Microphone / Camera not detected", "Teams / Zoom room link error"],
+    "Other": ["General IT assistance", "Relocation setup", "Hardware replacement"]
+  };
+
+  // Fetch client IP via public API
+  fetch('https://api.ipify.org?format=json')
+    .then(res => res.json())
+    .then(data => { clientIP = data.ip; updateUserBox(); })
+    .catch(() => { clientIP = "Unavailable"; updateUserBox(); });
+
+  window.onload = function() {
+    google.script.run.withSuccessHandler(initApp).getSessionUser();
+  };
+
+  function initApp(user) {
+    currentUser = user;
+    document.getElementById('loadingView').classList.add('hidden');
+
+    if (user.status !== "Approved") {
+      document.getElementById('pendingView').classList.remove('hidden');
+      return;
+    }
+
+    if (user.role === "Admin") {
+      document.getElementById('adminView').classList.remove('hidden');
+      loadPendingUsers();
+    }
+
+    document.getElementById('ticketView').classList.remove('hidden');
+    populateProblemTypes();
+    updateUserBox();
+  }
+
+  function updateUserBox() {
+    if (!currentUser) return;
+    document.getElementById('userInfoBox').innerHTML = `
+      <strong>Employee:</strong> ${currentUser.name} (${currentUser.email})<br>
+      <strong>Department:</strong> ${currentUser.department} | <strong>Phone:</strong> ${currentUser.phone}<br>
+      <strong>Detected IP Address:</strong> ${clientIP}
+    `;
+  }
+
+  function populateProblemTypes() {
+    const list = document.getElementById('problemTypes');
+    list.innerHTML = "";
+    Object.keys(problemData).forEach(type => {
+      const option = document.createElement('option');
+      option.value = type;
+      list.appendChild(option);
+    });
+  }
+
+  function onProblemTypeChange() {
+    const type = document.getElementById('problemType').value;
+    const conditionalFields = document.getElementById('conditionalFields');
+    const detailsInput = document.getElementById('details');
+    const detailsList = document.getElementById('detailSuggestions');
+
+    if (type === "USB Port Access request") {
+      conditionalFields.classList.add('hidden');
+      detailsInput.removeAttribute('required');
+      return;
+    }
+
+    conditionalFields.classList.remove('hidden');
+    detailsInput.setAttribute('required', 'true');
+    detailsList.innerHTML = "";
+
+    if (problemData[type]) {
+      problemData[type].forEach(item => {
+        const opt = document.createElement('option');
+        opt.value = item;
+        detailsList.appendChild(opt);
+      });
+    }
+  }
+
+  function handleFormSubmit(e) {
+    e.preventDefault();
+    const btn = document.getElementById('submitBtn');
+    btn.disabled = true;
+    btn.innerText = "Submitting...";
+
+    const type = document.getElementById('problemType').value;
+    const fileInput = document.getElementById('screenshot');
+    const file = fileInput.files[0];
+
+    const payload = {
+      email: currentUser.email,
+      name: currentUser.name,
+      department: currentUser.department,
+      phone: currentUser.phone,
+      ipAddress: clientIP,
+      problemType: type,
+      details: document.getElementById('details').value,
+      callRequested: document.getElementById('callRequested').checked,
+      fileName: file ? file.name : null,
+      fileType: file ? file.type : null,
+      fileData: null
+    };
+
+    if (file && type !== "USB Port Access request") {
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        payload.fileData = evt.target.result;
+        sendTicket(payload);
+      };
+      reader.readAsDataURL(file);
+    } else {
+      sendTicket(payload);
+    }
+  }
+
+  function sendTicket(payload) {
+    google.script.run.withSuccessHandler(res => {
+      if (res.success) {
+        alert("Ticket created successfully! Ticket ID: " + res.ticketId);
+        document.getElementById('ticketForm').reset();
+        onProblemTypeChange();
+      } else {
+        alert("Submission failed: " + res.error);
+      }
+      document.getElementById('submitBtn').disabled = false;
+      document.getElementById('submitBtn').innerText = "Submit Ticket";
+    }).submitTicket(payload);
+  }
+
+  function loadPendingUsers() {
+    google.script.run.withSuccessHandler(users => {
+      const container = document.getElementById('pendingList');
+      if (users.length === 0) {
+        container.innerHTML = "<p style='font-size:13px; color:#666;'>No pending approval requests.</p>";
+        return;
+      }
+      let html = "<table>";
+      users.forEach((u, i) => {
+        html += `
+          <div style="border: 1px solid #ddd; padding: 10px; margin-bottom: 8px; border-radius: 4px;">
+            <span>${u.email}</span><br>
+            <input type="text" id="name_${i}" placeholder="Full Name" style="width: 22%; margin-top:5px;">
+            <input type="text" id="dept_${i}" placeholder="Department" style="width: 22%;">
+            <input type="text" id="phone_${i}" placeholder="Phone" style="width: 22%;">
+            <select id="role_${i}" style="width: 15%;">
+              <option value="Employee">Employee</option>
+              <option value="IT">IT</option>
+              <option value="Admin">Admin</option>
+            </select>
+            <button class="btn" style="width: auto; padding: 6px 12px; margin-top: 5px;" onclick="approve('${u.email}', ${i})">Approve</button>
+          </div>
+        `;
+      });
+      container.innerHTML = html;
+    }).getPendingUsers();
+  }
+
+  function approve(email, idx) {
+    const name = document.getElementById(`name_${idx}`).value || "N/A";
+    const dept = document.getElementById(`dept_${idx}`).value || "General";
+    const phone = document.getElementById(`phone_${idx}`).value || "N/A";
+    const role = document.getElementById(`role_${idx}`).value;
+
+    google.script.run.withSuccessHandler(() => {
+      alert(`Approved ${email}`);
+      loadPendingUsers();
+    }).approveUser(email, role, name, dept, phone);
+  }
+</script>
+
+</body>
+</html>
